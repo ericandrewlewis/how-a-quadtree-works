@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Quadtree - nearest neighbor</title>
+<style>
+
+.button {
+	background-image: url('toolbarButtonGlyphs_2x.png');
+	width: 50px;
+	height: 40px;
+}
+
+.play-button {
+	background-position: -138px -102px;
+}
+
+.pause-button {
+	background-position: -75px -150px;
+}
+
+.step-over-button {
+	background-position: -266px -150px;
+}
+
+.point {
+  fill: #999;
+  stroke: #fff;
+}
+
+.point.scanned {
+  fill: orange;
+  fill-opacity: 1;
+  stroke: brown;
+}
+
+.point.selected {
+	stroke: #339900;
+  fill: #33FF00;
+  fill-opacity: 1;
+}
+
+.node {
+  fill: none;
+  stroke: #ccc;
+  shape-rendering: crispEdges;
+}
+
+.brush .extent {
+  stroke: #fff;
+  fill-opacity: .125;
+  shape-rendering: crispEdges;
+}
+
+</style>
+<body>
+<h1>Watch a Quadtree in action</h1>
+<p>Below you'll see a rectangle filled with data points, cut into boxes. Each box is a node in the quadtree.</p>
+<p>Click a point on the rectangle to start a quadtree search for the closest point.</p>
+<p>Click play to automatically move through the quadtree in action step-wise.</p>
+<p>Click pause to stop the quadtree in action.</p>
+<p>Click step over to move over one action of the quadtree.</p>
+<div>
+	<h2>Key</h2>
+	<div style="margin-bottom: 5px"><div style="margin: 10px; border: 5px solid deeppink; width: 100px; text-align: center">Current node being tested</div>
+	<div style="margin-bottom: 5px"><div style="margin: 10px; background-color: #ddd; width: 100px; text-align: center">Ignored node</div>
+	<span style="color: red;">Red dot</span>: click location. <span style="color: #33ff00;">Green dot</span>: closest point.
+	<span style="color: orange;">Orange dot</span>: scanned point.
+<div>
+	<button class="button play-button"></button>
+	<button class="button pause-button"></button>
+	<button class="button step-over-button"></button>
+</div>
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script>
+
+var width = 960,
+    height = 500;
+
+var data = d3.range(400).map(function() {
+  return [Math.random() * width, Math.random() * height];
+});
+
+var quadtree = d3.geom.quadtree()
+    .extent([[-1, -1], [width + 1, height + 1]])
+    (data);
+
+var color = d3.scale.linear()
+    .domain([0, 8])  // max depth of quadtree
+    .range(["#efe", "#060"]);
+
+// Append the general svg object to the DOM.
+var svg = d3.select("body").append("svg")
+    .attr("width", width)
+    .attr("height", height)
+    // Add a click handler.
+    .on("click", function (d) {
+        var xy = d3.mouse(d3.selectAll('svg')[0][0]);
+        svg.selectAll("#pt")
+            .attr("cx", xy[0])
+            .attr("cy", xy[1]);
+        clicked();
+    });
+
+var rect = svg.selectAll(".node")
+    .data(nodes(quadtree))
+  .enter().append("rect")
+    .attr("class", "node")
+    .attr("x", function(d) { return d.x1; })
+    .attr("y", function(d) { return d.y1; })
+    .attr("width", function(d) { return d.x2 - d.x1; })
+    .attr("height", function(d) { return d.y2 - d.y1; });
+
+var point = svg.selectAll(".point")
+    .data(data)
+  .enter().append("circle")
+    .attr("class", "point")
+    .attr("cx", function(d) { return d[0]; })
+    .attr("cy", function(d) { return d[1]; })
+    .attr("r", 3);
+
+svg.append("circle")
+    .attr("id", "pt")
+    .attr("r", 3)
+    .attr("cx", width/2)
+    .attr("cy", height/2)
+    .style("fill", "red");
+
+d3.select(".step-over-button")
+	.on('click', function() {
+		if ( ! window.visitor ) {
+			alert( 'You have to click a point first.' );
+		}
+		visitor.visitNextNode();
+	});
+
+d3.select(".play-button")
+	.on('click', function() {
+		if ( ! window.visitor ) {
+			alert( 'You have to click a point first.' );
+		}
+		if ( window.playing ) {
+			return;
+		}
+		window.playing = window.setInterval(function() { visitor.visitNextNode(); }, 400 );
+	});
+
+d3.select(".pause-button")
+	.on('click', function() {
+		if ( ! window.visitor ) {
+			alert( 'You have to click a point first.' );
+		}
+
+		if ( ! window.playing ) {
+			return;
+		}
+		window.clearInterval( window.playing );
+		delete window.playing;
+	});
+/*
+ * Collect a list of nodes to draw rectangles,
+ * adding data required for rendering (x,y borders and depth).
+ */
+function nodes(quadtree) {
+  var nodes = [];
+  quadtree.depth = 0; // root
+  quadtree.visit(function(node, x1, y1, x2, y2) {
+    node.x1 = x1;
+    node.y1 = y1;
+    node.x2 = x2;
+    node.y2 = y2;
+    nodes.push(node);
+    for (var i=0; i<4; i++) {
+        if (node.nodes[i]) node.nodes[i].depth = node.depth+1;
+    }
+  });
+  return nodes;
+}
+
+function nodeVisitor(x, y, best, node) {
+	this.x = x;
+	this.y = y;
+	this.root = node;
+	this.currentNode = null;
+	this.best = best;
+}
+
+nodeVisitor.prototype.visitNextNode = function() {
+	this.selectNextNode();
+	var node = this.currentNode, x = this.x, y = this.y, x1 = node.x1, y1 = node.y1, x2 = node.x2, y2 = node.y2;
+	node.visited = true;
+	// exclude node if point is farther away than best distance in either axis
+	if (x < x1 - this.best.distance || x > x2 + this.best.distance || y < y1 - this.best.distance || y > y2 + this.best.distance) {
+			node.ignore = true;
+			this.decorateNodes();
+	    return;
+	}
+	// test point if there is one, potentially updating best
+	var p = node.point;
+	if (p) {
+	  p.scanned = true;
+	  var dx = p[0] - x, dy = p[1] - y, distance = Math.sqrt(dx*dx + dy*dy);
+	  if (distance < this.best.distance) {
+	    this.best.distance = distance;
+	    if ( this.best.p && this.best.p.selected )  {
+	    	this.best.p.selected = false;
+	    }
+	    this.best.p = p;
+	    this.best.p.selected = true;
+	  }
+	}
+	this.decorateNodes();
+}
+
+/**
+ * Decorate the nodes visually based on their state.
+ *
+ * @return {[type]} [description]
+ */
+nodeVisitor.prototype.decorateNodes = function() {
+	var node = this.currentNode, x = this.x, y = this.y, x1 = node.x1, y1 = node.y1, x2 = node.x2, y2 = node.y2;
+	rect.each(function(_rect) {
+		var isRectBeingScanned = x1 == _rect.x1 && x2 == _rect.x2 && y1 == _rect.y1 && y2 == _rect.y2;
+		if ( isRectBeingScanned ) {
+			this.style.stroke = 'deepPink';
+			this.style.strokeWidth = '8px';
+		} else {
+			this.style.stroke = '#ccc';
+			this.style.strokeWidth = '1px';
+		}
+	});
+	point.classed("scanned", function(d) { return d.scanned; });
+	point.classed("selected", function(d) { return d.selected; });
+	rect.style('fill', function(_rect) {
+		if ( _rect.ignore )  {
+			return '#ddd';
+		} else {
+			return 'none';
+		}
+	} );
+}
+
+/**
+ * Select the next node to visit.
+ *
+ * @return {[type]} [description]
+ */
+nodeVisitor.prototype.selectNextNode = function() {
+	// First time through, set the current node to root.
+	if ( ! this.currentNode ) {
+		this.currentNode = this.root;
+		return;
+	}
+	var parent = this.currentNode;
+	var children = this.currentNode.nodes;
+
+	// given the clicked coordinate, find the child node that the coordinate would
+	// fall into to. then recurse on this child first.
+	var rl = (2*this.x > this.currentNode.x1 + this.currentNode.x2), bt = (2 * this.y > this.currentNode.y1 + this.currentNode.y2);
+
+	// If we're still interested in children...
+	if ( ! this.currentNode.ignore ) {
+		// Select a child to drill down into with priority to the one that contains
+		// the click. Don't visit if it's already been visited.
+		if (children[bt*2+rl] && ! children[bt*2+rl].visited)  {
+			this.currentNode = children[bt*2+rl];
+		} else if (children[bt*2+(1-rl)] && ! children[bt*2+(1-rl)].visited) {
+			this.currentNode = children[bt*2+(1-rl)];
+		} else if (children[(1-bt)*2+rl] && ! children[(1-bt)*2+rl].visited) {
+			this.currentNode = children[(1-bt)*2+rl];
+		} else if (children[(1-bt)*2+(1-rl)] && ! children[(1-bt)*2+(1-rl)].visited ) {
+			this.currentNode = children[(1-bt)*2+(1-rl)];
+		} else {
+			// If all children have been visited, we want to go to the next node,
+			// or perhaps just set the current node up one in the tree and re-run this function.
+			this.currentNode = this.currentNode.parent;
+			this.selectNextNode();
+			return;
+		}
+	} else {
+		// If all children have been visited, we want to go to the next node,
+		// or perhaps just set the current node up one in the tree and re-run this function.
+		this.currentNode = this.currentNode.parent;
+		this.selectNextNode();
+		return;
+	}
+	this.currentNode.parent = parent;
+}
+
+/**
+ * Handle the click event, running the quadtree to find the nearest neighbor.
+ *
+ * @return {[type]} [description]
+ */
+function clicked() {
+    pt = d3.selectAll('#pt');
+    var x = +pt.attr('cx'), y = +pt.attr('cy');
+
+    point.each(function(d) { d.scanned = d.selected = false; });
+    rect.each(function(d) { d.visited = false; d.ignore = false; });
+
+    window.visitor = new nodeVisitor(x, y, {distance: height+width, p: null}, quadtree);
+    visitor.visitNextNode();
+}
+</script>
